@@ -588,7 +588,6 @@ label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.1em;
 .cd-subtotal-row{display:flex;justify-content:space-between;font-size:12px;color:var(--text2)}
 .cd-discount-row{display:flex;justify-content:space-between;font-size:12px;color:var(--orange)}
 .bw .cd-discount-row{color:var(--text2)}
-.cd-tva-row{display:flex;justify-content:space-between;font-size:12px;color:var(--text3)}
 .cd-divider{height:1px;background:var(--border)}
 /* Loyalty on client */
 .cd-loyalty{
@@ -830,7 +829,7 @@ label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.1em;
       </div>
     </div>
 
-    <div class="auth-footer">CristalCaisse v4.1 · Données 100% locales</div>
+    <div class="auth-footer">CristalCaisse v4.2 · Données 100% locales</div>
     <div class="auth-footer">Open Source is love ❤️</div>
   </div>
 </div>
@@ -953,7 +952,6 @@ label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.1em;
               <div class="form-group" style="margin:0"><label>Téléphone</label><input id="set-phone" type="tel" placeholder="ex: 06.12.34.56.78" oninput="formatPhone(this)"></div>
             </div>
             <div class="form-group"><label>Message pied de ticket</label><input id="set-footer" type="text" placeholder="ex: Merci de votre visite !"></div>
-            <div class="form-group" style="max-width:180px"><label>Taux de TVA (%)</label><input id="set-tva" type="number"  max="100" step="0." placeholder="0"></div>
             <button class="primary" onclick="saveSettings()">💾 Enregistrer les informations</button>
           </div>
         </div>
@@ -987,10 +985,6 @@ label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.1em;
           <div class="settings-row">
             <div class="settings-row-label"><strong>Mode Noir &amp; Blanc</strong><span>Interface minimaliste monochrome, idéale pour les terminaux fixes</span></div>
             <label class="toggle"><input type="checkbox" id="toggle-bw" onchange="toggleBW()"><span class="toggle-slider"></span></label>
-          </div>
-          <div class="settings-row">
-            <div class="settings-row-label"><strong>Afficher la TVA</strong><span>Détailler la TVA sur le ticket de caisse</span></div>
-            <label class="toggle"><input type="checkbox" id="toggle-tva" onchange="saveBoolSettings()"><span class="toggle-slider"></span></label>
           </div>
         </div>
 
@@ -1617,7 +1611,7 @@ async function register() {
   const salt = genSalt();
   const acc = {
     id: 'u_' + Date.now(), username: user, password: await hashPassword(pass, salt), salt,
-    company, phone, footer: 'Merci de votre visite !', tva: 20, showTva: true, bw: false,
+    company, phone, footer: 'Merci de votre visite !', tva: 0, showTva: false, bw: false,
     loyaltyRate: 1, loyaltyThreshold: 100, loyaltyReward: 5,
     products: [
       { id: 'p1', name: 'Article exemple', price: 5.00, category: 'Général', emoji: '🛍', stock: null, barcode: null },
@@ -1630,6 +1624,10 @@ async function register() {
 
 function startSession(acc) {
   U = JSON.parse(JSON.stringify(acc));
+  U.tva = 0;
+  U.showTva = false;
+  U.transactions.forEach(t => { t.tva = 0; t.tvaAmt = 0; });
+  saveU();
   localStorage.setItem('pos_session', acc.id);
   document.getElementById('view-auth').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
@@ -1779,8 +1777,8 @@ function getCartTotals() {
   const discount = parseFloat(document.getElementById('discount-input')?.value || 0) || 0;
   const discountAmt = subtotal * discount / 100;
   const after = subtotal - discountAmt;
-  const tva = U?.tva || 20;
-  const tvaAmt = after * (tva / (100 + tva));
+  const tva = 0;
+  const tvaAmt = 0;
   return { subtotal, discount, discountAmt, total: after, tvaAmt, tva };
 }
 
@@ -1822,7 +1820,6 @@ function renderCart() {
   const t = getCartTotals();
   let rows = `<div class="summary-row"><span>Sous-total (${cart.reduce((s,i)=>s+i.qty,0)} art.)</span><span>${fp(t.subtotal)}</span></div>`;
   if (t.discount > 0) rows += `<div class="summary-row"><span>Remise (${t.discount}%)</span><span>−${fp(t.discountAmt)}</span></div>`;
-  if (U?.showTva) rows += `<div class="summary-row"><span>TVA (${t.tva}%)</span><span>${fp(t.tvaAmt)}</span></div>`;
   rows += `<div class="summary-total"><span>Total</span><span>${fp(t.total)}</span></div>`;
   summary.innerHTML = rows; btn.disabled = false;
   broadcastCart();
@@ -2137,7 +2134,6 @@ function buildReceiptHTML(t, ptsEarned = 0) {
   const items = t.items.map(i => `<div class="ri"><span class="rn">${esc(i.emoji)} ${esc(i.name)}</span><span class="rq">x${i.qty}</span><span class="rp">${fp(i.price*i.qty)}</span></div>`).join('');
   let totals = `<div class="rrow"><span>Sous-total</span><span>${fp(t.subtotal)}</span></div>`;
   if (t.discount > 0) totals += `<div class="rrow"><span>Remise ${t.discount}%</span><span>−${fp(t.discountAmt)}</span></div>`;
-  if (U?.showTva) totals += `<div class="rrow"><span>TVA (${t.tva}%)</span><span>${fp(t.tvaAmt)}</span></div>`;
   totals += `<div class="rrow big"><span>TOTAL</span><span>${fp(t.total)}</span></div>`;
 
   // Payment section
@@ -2309,11 +2305,11 @@ function viewRefundEntry(id) {
 
 function exportCSV() {
   if (!U?.transactions.length) { toast('Aucune donnée', 'error'); return; }
-  const rows = [['N°','Date','Articles','Sous-total','Remise%','TVA','Total','Paiement','Note']];
+  const rows = [['N°','Date','Articles','Sous-total','Remise%','Total','Paiement','Note']];
   U.transactions.forEach(t => rows.push([
     t.number, new Date(t.date).toLocaleString('fr-FR'),
     t.items.map(i => `${i.name} x${i.qty}`).join(' / '),
-    t.subtotal.toFixed(2), t.discount||0, (t.tvaAmt||0).toFixed(2), t.total.toFixed(2),
+    t.subtotal.toFixed(2), t.discount||0, t.total.toFixed(2),
     payLabel(t.payment?.method||''), t.note||''
   ]));
   const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
@@ -2588,12 +2584,10 @@ function loadSettings() {
   document.getElementById('set-company').value = U.company || '';
   document.getElementById('set-phone').value = U.phone || '';
   document.getElementById('set-footer').value = U.footer || '';
-  document.getElementById('set-tva').value = (U.tva !== undefined && U.tva !== null) ? U.tva : 20;
   document.getElementById('set-loy-rate').value = U.loyaltyRate || 1;
   document.getElementById('set-loy-threshold').value = U.loyaltyThreshold || 100;
   document.getElementById('set-loy-reward').value = U.loyaltyReward || 5;
   document.getElementById('toggle-bw').checked = !!U.bw;
-  document.getElementById('toggle-tva').checked = !!U.showTva;
   // Update formula preview
   const rate = U.loyaltyRate || 1;
   const threshold = U.loyaltyThreshold || 100;
@@ -2609,14 +2603,13 @@ function saveSettings() {
   U.company = document.getElementById('set-company').value.trim();
   U.phone = document.getElementById('set-phone').value.trim();
   U.footer = document.getElementById('set-footer').value.trim();
-  const tvaValue = parseFloat(document.getElementById('set-tva').value);
-  U.tva = !isNaN(tvaValue) ? tvaValue : 20;
+  U.tva = 0;
+  U.showTva = false;
   U.loyaltyRate = parseFloat(document.getElementById('set-loy-rate').value) || 1;
   U.loyaltyThreshold = parseInt(document.getElementById('set-loy-threshold').value) || 100;
   U.loyaltyReward = parseFloat(document.getElementById('set-loy-reward').value) || 5;
   saveU(); updateTopbar(); renderCart(); toast('Paramètres enregistrés', 'success');
 }
-function saveBoolSettings() { U.showTva = document.getElementById('toggle-tva').checked; saveU(); renderCart(); }
 function toggleBW() { U.bw = document.getElementById('toggle-bw').checked; document.body.classList.toggle('bw', U.bw); saveU(); }
 async function changePassword() {
   const p1 = document.getElementById('set-newpass').value;
@@ -2982,8 +2975,8 @@ function confirmImport() {
     company:          importData.company          || '',
     phone:            importData.phone            || '',
     footer:           importData.footer           || 'Merci de votre visite !',
-    tva:              importData.tva              || 20,
-    showTva:          importData.showTva          !== undefined ? importData.showTva : true,
+    tva:              0,
+    showTva:          false,
     bw:               importData.bw               || false,
     loyaltyRate:      importData.loyaltyRate      || 1,
     loyaltyThreshold: importData.loyaltyThreshold || 100,
@@ -3471,7 +3464,6 @@ function renderClientCart(d) {
     document.getElementById('cd-total').textContent = fp(t.total);
     let rows = `<div class="cd-subtotal-row"><span>Sous-total</span><span>${fp(t.subtotal)}</span></div>`;
     if (t.discount > 0) rows += `<div class="cd-discount-row"><span>Remise ${t.discount}%</span><span>−${fp(t.discountAmt)}</span></div>`;
-    rows += `<div class="cd-tva-row"><span>TVA incluse</span><span>${fp(t.tvaAmt)}</span></div>`;
     document.getElementById('cd-breakdown').innerHTML = rows;
   }
 
