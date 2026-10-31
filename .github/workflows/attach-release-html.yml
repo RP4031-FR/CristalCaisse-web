@@ -3,6 +3,13 @@ name: Joindre automatiquement le HTML aux Releases
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag de la Release à compléter (ex. v4.2 ou v4.2.0)"
+        required: true
+        type: string
+        default: "v4.2"
 
 permissions:
   contents: write
@@ -19,20 +26,27 @@ jobs:
       - name: Joindre le HTML sous le nom standard
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          VERSION="${TAG#v}"
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-            echo "::error::Tag invalide : $TAG (format attendu : vX.Y ou vX.Y.Z)"
+          TAG="${RELEASE_TAG:-$INPUT_TAG}"
+          if [[ -z "$TAG" ]]; then
+            echo "::error::Aucun tag de Release fourni."
             exit 1
           fi
-          MAJOR_MINOR="$(echo "$VERSION" | cut -d. -f1-2)"
+          VERSION="${TAG#v}"
+          if [[ ! "$VERSION" =~ ^([0-9]+)\.([0-9]+)(\.([0-9]+))?$ ]]; then
+            echo "::error::Tag invalide : $TAG. Formats acceptés : vX.Y ou vX.Y.Z"
+            exit 1
+          fi
+          MAJOR_MINOR="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
           SOURCE="CristalCaisse.$MAJOR_MINOR.html"
           if [[ ! -f "$SOURCE" ]]; then
-            echo "::error::Fichier source introuvable : $SOURCE"
+            echo "::error::Fichier source introuvable : $SOURCE dans la branche main."
             exit 1
           fi
           gh release upload "$TAG" "$SOURCE#CristalCaisse.html" \
             --repo RP4031-FR/CristalCaisse-web \
             --clobber
+          echo "::notice::Release $TAG complétée avec $SOURCE sous le nom CristalCaisse.html."
